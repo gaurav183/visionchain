@@ -16,42 +16,47 @@ limitations under the License.
 Licensed Materials - Property of IBM
 © Copyright IBM Corp. 2016
 */
+
+
+
+
+/*
+
+Hierarchy :
+	AccountHolder
+		ID
+		Name
+		AssetID[](footage::vID)
+
+	Footage
+		vID
+		Owner
+		Frames[] video_frame
+
+	video_frame
+		hash
+		timecode 
+
+
+
+
+
+
+*/
 package main
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"time"
 	"strings"
-
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 )
-
-var cpPrefix = "cp:"
-var accountPrefix = "acct:"
 
 // SimpleChaincode example simple Chaincode implementation
 type SimpleChaincode struct {
 }
 
-
-
-const (
-	millisPerSecond = int64(time.Second / time.Millisecond)
-	nanosPerMillisecond = int64(time.Millisecond / time.Nanosecond)
-)
-
-func msToTime(ms string) (time.Time, error) {
-	msInt, err := strconv.ParseInt(ms, 10, 64)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	return time.Unix(msInt / millisPerSecond,
-		(msInt % millisPerSecond) * nanosPerMillisecond), nil
-}
 
 type video_frame struct {
 	Hash  string    `json:"Hash"`
@@ -102,8 +107,8 @@ func (t *SimpleChaincode) createAccount(stub shim.ChaincodeStubInterface, args [
 			fmt.Println("Error unmarshalling account " + account.ID + "\n--->: " + err.Error())
 
 			if strings.Contains(err.Error(), "unexpected end") {
-				fmt.Println("No data means existing account found for " + account.ID + ", initializing account.")
-				err = stub.PutState(accountPrefix + account.ID, accountBytes)
+				fmt.Println("No data means no existing account found for " + account.ID + ", initializing account.")
+				err = stub.PutState(account.ID, accountBytes)
 
 				if err == nil {
 					fmt.Println("created account" + account.ID)
@@ -141,12 +146,12 @@ func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface, function string
 	fmt.Println("Init firing. Function will be ignored: " + function)
 
 	// Initialize the collection of commercial paper keys
-	fmt.Println("Initializing paper keys collection")
+	fmt.Println("Initializing footage keys collection")
 	var blank []string
 	blankBytes, _ := json.Marshal(&blank)
 	err := stub.PutState("FootageKeys", blankBytes)
 	if err != nil {
-		fmt.Println("Failed to initialize paper key collection")
+		fmt.Println("Failed to initialize footage key collection")
 	}
 
 	fmt.Println("Initialization complete")
@@ -154,7 +159,7 @@ func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface, function string
 }
 
 func (t *SimpleChaincode) createNewFootage(stub shim.ChaincodeStubInterface, args []string) ([]byte, error) {
-	fmt.Println("Creating commercial paper")
+	fmt.Println("Creating footage")
 
 	/*		0
 		json
@@ -182,36 +187,68 @@ func (t *SimpleChaincode) createNewFootage(stub shim.ChaincodeStubInterface, arg
 			"issueDate":"1456161763790"  (current time in milliseconds as a string)
 
 		}
+
+
+
+
+
+
 	*/
-	//need one arg
-	if len(args) != 1 {
+	//need minimum two arg , two arg means creating empty footage, 4 arg means appending frame to existing footage.. 
+	if len(args) != 2 {
 		fmt.Println("error invalid arguments")
-		return nil, errors.New("Incorrect number of arguments. Expecting commercial paper record")
+		return nil, errors.New("Incorrect number of arguments. Expecting [Account,Footage,VideoFrame]") //if adding new frames to existing footage, pass me existing ID - else - ill handle a brand new vID
 	}
 
-	var newfootage footage
-	var err error
-	var account Account
 
-	fmt.Println("Unmarshalling Footage")
+
+	var err error
+
+	var account Account
+	var newfootage footage
+	var videoframe video_frame
+	fmt.Println("Unmarshalling Account first")
 	err = json.Unmarshal([]byte(args[0]), &account)
 	if err != nil {
-		fmt.Println("error invalid footage issue")
+		fmt.Println("error unmarshalling account.")
 		return nil, errors.New("Invalid footage issue")
 	}
-	newfootage.Owner = account.ID
-	account.AssetsIds = append(account.AssetsIds, footage.vID)
 
-	// Set the issuer to be the owner of all quantity
-	var videoframe video_frame
+
+	fmt.Println("Unmarshalling Footage second")
+	err = json.Unmarshal([]byte(args[1]), &newfootage)
+	if err != nil {
+		fmt.Println("error unmarshalling account.")
+		return nil, errors.New("Invalid footage issue")
+	}
+
+/*
+	fmt.Println("Unmarshalling video frame third")
+	err = json.Unmarshal([]byte(args[2]), &videoframe)
+	if err != nil {
+		fmt.Println("error unmarshalling video frame.")
+		return nil, errors.New("Invalid footage issue")
+	}
+*/
+
+
+	videoframe = newfootage.Frames[0]
+
+	//var vframe = video_frame{Hash: currentHash,Timecode:currentTimecode}
+	// = footage{vID: newfootage.vID, Owner: newfootage.Owner, Frames: assetIds}
+	//accountBytes, err := json.Marshal(&account)
+
+
+	//newfootage.Owner = account
+	account.AssetsIds = append(account.AssetsIds, newfootage.vID)
 
 	newfootage.Frames = append(newfootage.Frames, videoframe)
 
-	fmt.Println("Getting State on CP " + newfootage.vID)
+	fmt.Println("Getting State on footage " + newfootage.vID) //do i need to make it something like userID+vID to specify a specific footageID
 	cpRxBytes, err := stub.GetState(newfootage.vID)
 	if cpRxBytes == nil {
-		fmt.Println("vID does not exist, creating it")
-		cpBytes, err := json.Marshal(&cp)
+		fmt.Println("vID does not exist, creating it") //new footage
+		cpBytes, err := json.Marshal(&newfootage)
 		if err != nil {
 			fmt.Println("Error marshalling foortage")
 			return nil, errors.New("Error issuing footage")
@@ -228,102 +265,103 @@ func (t *SimpleChaincode) createNewFootage(stub shim.ChaincodeStubInterface, arg
 			fmt.Println("Error marshalling account")
 			return nil, errors.New("Error issuing footage")
 		}
-		err = stub.PutState( newfootage.Owner, accountBytesToWrite)
+		err = stub.PutState( newfootage.Owner.ID, accountBytesToWrite)
 		if err != nil {
 			fmt.Println("Error putting state on accountBytesToWrite")
-			return nil, errors.New("Error issuing commercial paper")
+			return nil, errors.New("Error issuing footage")
 		}
 
 
 		// Update the paper keys by adding the new key
-		fmt.Println("Getting Paper Keys")
-		keysBytes, err := stub.GetState("PaperKeys")
+		fmt.Println("Getting Footage Keys")
+		keysBytes, err := stub.GetState("footageKeys") //get existing account's footage
 		if err != nil {
-			fmt.Println("Error retrieving paper keys")
-			return nil, errors.New("Error retrieving paper keys")
+			fmt.Println("Error retrieving footage keys")
+			return nil, errors.New("Error retrieving footage keys")
 		}
 		var keys []string
 		err = json.Unmarshal(keysBytes, &keys)
 		if err != nil {
 			fmt.Println("Error unmarshel keys")
-			return nil, errors.New("Error unmarshalling paper keys ")
+			return nil, errors.New("Error unmarshalling Footage keys ")
 		}
 
-		fmt.Println("Appending the new key to Paper Keys")
+		fmt.Println("Appending the new key to footage Keys")
 		foundKey := false
 		for _, key := range keys {
-			if key == cpPrefix + cp.CUSIP {
+			if key == newfootage.vID {
 				foundKey = true
 			}
 		}
-		if foundKey == false {
-			keys = append(keys, cpPrefix + cp.CUSIP)
+		if foundKey == false { 
+			//new footage case
+			keys = append(keys, newfootage.vID)
 			keysBytesToWrite, err := json.Marshal(&keys)
 			if err != nil {
-				fmt.Println("Error marshalling keys")
+				fmt.Println("Error marshalling footage")
 				return nil, errors.New("Error marshalling the keys")
 			}
-			fmt.Println("Put state on PaperKeys")
-			err = stub.PutState("PaperKeys", keysBytesToWrite)
+			fmt.Println("Put state on Footage Keys")
+			err = stub.PutState("footageKeys", keysBytesToWrite)
 			if err != nil {
 				fmt.Println("Error writting keys back")
 				return nil, errors.New("Error writing the keys back")
 			}
 		}
 
-		fmt.Println("Issue commercial paper %+v\n", cp)
+		fmt.Println("Create footage  %+v\n", newfootage)
 		return nil, nil
 	} else {
-		fmt.Println("CUSIP exists")
+		fmt.Println("Footage exists, appending frames!")
 
-		var cprx CP
-		fmt.Println("Unmarshalling CP " + cp.CUSIP)
+		var cprx footage
+		fmt.Println("Unmarshalling footage " + newfootage.vID)
 		err = json.Unmarshal(cpRxBytes, &cprx)
 		if err != nil {
-			fmt.Println("Error unmarshalling cp " + cp.CUSIP)
-			return nil, errors.New("Error unmarshalling cp " + cp.CUSIP)
+			fmt.Println("Error unmarshalling footage " + newfootage.vID)
+			return nil, errors.New("Error unmarshalling footage " + newfootage.vID)
 		}
-
-		cprx.Qty = cprx.Qty + cp.Qty
-
-		for key, val := range cprx.Owners {
+/*
+		for key, val := range cprx.Frames {
 			if val.Company == cp.Issuer {
 				cprx.Owners[key].Quantity += cp.Qty
 				break
-			}
+			}	
 		}
+*/
 
+		cprx.Frames = append(cprx.Frames,videoframe)
 		cpWriteBytes, err := json.Marshal(&cprx)
 		if err != nil {
-			fmt.Println("Error marshalling cp")
-			return nil, errors.New("Error issuing commercial paper")
+			fmt.Println("Error marshalling footage")
+			return nil, errors.New("Error issuing footage")
 		}
-		err = stub.PutState(cpPrefix + cp.CUSIP, cpWriteBytes)
+		err = stub.PutState(newfootage.vID, cpWriteBytes)
 		if err != nil {
-			fmt.Println("Error issuing paper")
-			return nil, errors.New("Error issuing commercial paper")
+			fmt.Println("Error issuing footage")
+			return nil, errors.New("Error issuing footage")
 		}
 
-		fmt.Println("Updated commercial paper %+v\n", cprx)
+		fmt.Println("Updated footage %+v\n", cprx)
 		return nil, nil
 	}
 }
 
-func getAllFootage(stub shim.ChaincodeStubInterface) ([]CP, error) {
+func getAllFootage(args[] string,stub shim.ChaincodeStubInterface) ([]footage, error) {
 
 	var allFootage []footage
 
 	// Get list of all the keys
-	keysBytes, err := stub.GetState("PaperKeys") //get keys of this account's footages
+	keysBytes, err := stub.GetState("footageKeys") //get keys of this account's footages
 	if err != nil {
-		fmt.Println("Error retrieving paper keys")
-		return nil, errors.New("Error retrieving paper keys")
+		fmt.Println("Error retrieving footage keys")
+		return nil, errors.New("Error retrieving footages")
 	}
 	var keys []string
 	err = json.Unmarshal(keysBytes, &keys)
 	if err != nil {
-		fmt.Println("Error unmarshalling paper keys")
-		return nil, errors.New("Error unmarshalling paper keys")
+		fmt.Println("Error unmarshalling footage keys")
+		return nil, errors.New("Error unmarshalling footage keys")
 	}
 
 	// Get all the cps
@@ -344,22 +382,22 @@ func getAllFootage(stub shim.ChaincodeStubInterface) ([]CP, error) {
 	return allFootage, nil
 }
 
-func getFootage(cpid string, stub shim.ChaincodeStubInterface) (CP, error) {
+func getFootage(cpid string, stub shim.ChaincodeStubInterface) (footage, error) {
 	var feet footage //here feet is a single footage object
 
 	cpBytes, err := stub.GetState(cpid) //here 'cpid' refers to vID field of footage
 	if err != nil {
 		fmt.Println("Error retrieving footage " + cpid)
-		return cp, errors.New("Error retrieving footage " + cpid)
+		return feet, errors.New("Error retrieving footage " + cpid)
 	}
 
 	err = json.Unmarshal(cpBytes, &feet)
 	if err != nil {
 		fmt.Println("Error unmarshalling footage " + cpid)
-		return cp, errors.New("Error unmarshalling cp " + cpid)
+		return feet, errors.New("Error unmarshalling cp " + cpid)
 	}
 
-	return cp, nil
+	return feet, nil
 }
 
 func getAccount(companyID string, stub shim.ChaincodeStubInterface) (Account, error) {
@@ -367,16 +405,16 @@ func getAccount(companyID string, stub shim.ChaincodeStubInterface) (Account, er
 	companyBytes, err := stub.GetState(companyID)
 	if err != nil {
 		fmt.Println("Account not found " + companyID)
-		return company, errors.New("Account not found " + companyID)
+		return shooter, errors.New("Account not found " + companyID)
 	}
 
-	err = json.Unmarshal(companyBytes, &company)
+	err = json.Unmarshal(companyBytes, &shooter)
 	if err != nil {
 		fmt.Println("Error unmarshalling account " + companyID + "\n err:" + err.Error())
-		return company, errors.New("Error unmarshalling account " + companyID)
+		return shooter, errors.New("Error unmarshalling account " + companyID)
 	}
 
-	return company, nil
+	return shooter, nil
 }
 
 
@@ -386,7 +424,7 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface, function strin
 
 	if function == "GetAllFootage" {
 		fmt.Println("Getting all Footages")
-		allCPs, err := getAllFootage(stub)
+		allCPs, err := getAllFootage(args,stub)
 		if err != nil {
 			fmt.Println("Error from getAllFootage")
 			return nil, err
@@ -446,10 +484,12 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface, function strin
 func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface, function string, args []string) ([]byte, error) {
 	fmt.Println("Invoke running. Function: " + function)
 
-	if function == "craeteNewFootage" {
-		return t.craeteNewFootage(stub, args)
+	if function == "createNewFootage" {
+		return t.createNewFootage(stub, args) //we use this to create brand new footage and add to existing footage
 	} else if function == "createAccount" {
 		return t.createAccount(stub, args)
+	}else if function == "init" {
+		return t.Init(stub,"initializer",args)
 	}
 
 	return nil, errors.New("Received unknown function invocation: " + function)
